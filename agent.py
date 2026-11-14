@@ -57,21 +57,40 @@ def _kill_process(proc: subprocess.Popen):
         subprocess.run(["taskkill", "/F", "/T", "/PID", str(proc.pid)], capture_output=True)
 
 
+# def _sync_salad_state(gpu_name: str):
+#     """Salad管理対象GPUの場合、gRPC側の実フラグ状態を running_processes に反映する"""
+#     if not TARGETS[gpu_name].get("salad_managed"):
+#         return
+
+#     current = running_processes.get(gpu_name)
+#     # すでに sd や ollama が稼働中ならそのままにする
+#     if current is not None and current["service"] != "salad":
+#         if current.get("proc") is not None and current["proc"].poll() is None:
+#             return
+
+#     if salad.is_active():
+#         running_processes[gpu_name] = {"service": "salad", "proc": None}
+#     elif current is not None and current["service"] == "salad":
+#         running_processes.pop(gpu_name, None)
+
 def _sync_salad_state(gpu_name: str):
-    """Salad管理対象GPUの場合、gRPC側の実フラグ状態を running_processes に反映する"""
-    if not TARGETS[gpu_name].get("salad_managed"):
+    """Saladの実際の状態と running_processes を同期する"""
+    if not TARGETS.get(gpu_name, {}).get("salad_managed"):
         return
 
-    current = running_processes.get(gpu_name)
-    # すでに sd や ollama が稼働中ならそのままにする
-    if current is not None and current["service"] != "salad":
-        if current.get("proc") is not None and current["proc"].poll() is None:
-            return
+    st = salad.get_status().get("state", "STOPPED")
+    
+    # 明確に停止しているステータス以外はすべて「稼働中」とみなす
+    INACTIVE_STATES = {"PAUSED", "STOPPED", "UNKNOWN", "ERROR", "OFFLINE"}
+    is_active = st not in INACTIVE_STATES
 
-    if salad.is_active():
-        running_processes[gpu_name] = {"service": "salad", "proc": None}
-    elif current is not None and current["service"] == "salad":
-        running_processes.pop(gpu_name, None)
+    current = running_processes.get(gpu_name)
+    if is_active:
+        if current is None or current.get("service") == "salad":
+            running_processes[gpu_name] = {"service": "salad", "proc": None}
+    else:
+        if current and current.get("service") == "salad":
+            running_processes.pop(gpu_name, None)
 
 
 def _stop_current_on_gpu(gpu_name: str) -> str | None:
@@ -99,26 +118,66 @@ def health():
     return {"status": "ok"}
 
 
+# @app.get("/status/{gpu_name}")
+# def get_status(gpu_name: str):
+#     """指定したGPUで現在何が動いているかを取得"""
+#     if gpu_name not in TARGETS:
+#         raise HTTPException(status_code=404, detail="Unknown GPU")
+
+#     _sync_salad_state(gpu_name)
+#     current = running_processes.get(gpu_name)
+#     if current is not None:
+#         if current["service"] == "salad":
+#             return {"gpu": gpu_name, "running": True, "service": "salad", "pid": None}
+#         if current["proc"] is not None and current["proc"].poll() is None:
+#             return {
+#                 "gpu": gpu_name,
+#                 "running": True,
+#                 "service": current["service"],
+#                 "pid": current["proc"].pid,
+#             }
+
+#     return {"gpu": gpu_name, "running": False, "service": None, "pid": None}
+
 @app.get("/status/{gpu_name}")
 def get_status(gpu_name: str):
-    """指定したGPUで現在何が動いているかを取得"""
     if gpu_name not in TARGETS:
         raise HTTPException(status_code=404, detail="Unknown GPU")
 
     _sync_salad_state(gpu_name)
     current = running_processes.get(gpu_name)
+
     if current is not None:
+        # 1. Salad の場合は proc が None でも running として返す
         if current["service"] == "salad":
-            return {"gpu": gpu_name, "running": True, "service": "salad", "pid": None}
-        if current["proc"] is not None and current["proc"].poll() is None:
             return {
+                "status": "running",
+                "service": "salad",
+                "running_service": "salad",
                 "gpu": gpu_name,
-                "running": True,
-                "service": current["service"],
-                "pid": current["proc"].pid,
+                "pid": None,
             }
 
-    return {"gpu": gpu_name, "running": False, "service": None, "pid": None}
+        # 2. SD / Ollama の場合はプロセスの生存確認
+        if current["proc"] is not None and current["proc"].poll() is None:
+            svc = current["service"]
+            return {
+                "status": "running",
+                "service": svc,
+                "running_service": svc,
+                "gpu": gpu_name,
+                "pid": current["proc"].pid,
+            }
+        else:
+            running_processes.pop(gpu_name, None)
+
+    return {
+        "status": "stopped",
+        "service": None,
+        "running_service": None,
+        "gpu": gpu_name,
+        "pid": None,
+    }
 
 
 @app.post("/start/{gpu_name}/{service_name}")
