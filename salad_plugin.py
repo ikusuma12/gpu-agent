@@ -62,6 +62,7 @@ class SaladPlugin:
         self.cfg = config
         self.deficit_streak = 0
         self.auto_stop_enabled = False  # 赤字検知時の自動一時停止（デフォルトOFF）
+        self._last_known_active = False
 
     def _run_cmd(self, cmd: list[str], ignore_error: bool = False, env: dict | None = None) -> str:
         try:
@@ -205,6 +206,7 @@ class SaladPlugin:
             )
             rpc(b"", timeout=5)
 
+        self._last_known_active = enable  # ← 追加：最後に送った命令状態を記憶
         if not enable:
             self.deficit_streak = 0
 
@@ -327,11 +329,28 @@ class SaladPlugin:
 
         grpc_state = self._fetch_grpc_state() if is_running else None
 
+        # if not is_running:
+        #     state = "STOPPED"
+        #     is_active = False
+        # elif grpc_state is not None:
+        #     is_active = grpc_state["is_active"]
+        #     if not is_active:
+        #         state = "PAUSED"
+        #     elif m_target["util_pct"] >= 15:
+        #         state = "CHOPPING"
+        #     else:
+        #         state = "PREPPING_OR_FINDING_JOB"
+        # else:
+        #     is_active = m_target["util_pct"] >= 15
+        #     state = "CHOPPING" if is_active else "UNKNOWN"
+
         if not is_running:
             state = "STOPPED"
             is_active = False
+            self._last_known_active = False
         elif grpc_state is not None:
             is_active = grpc_state["is_active"]
+            self._last_known_active = is_active
             if not is_active:
                 state = "PAUSED"
             elif m_target["util_pct"] >= 15:
@@ -339,8 +358,14 @@ class SaladPlugin:
             else:
                 state = "PREPPING_OR_FINDING_JOB"
         else:
-            is_active = m_target["util_pct"] >= 15
-            state = "CHOPPING" if is_active else "UNKNOWN"
+            # gRPCストリームが一時タイムアウトした場合は、直前のアクティブ状態を維持する
+            is_active = self._last_known_active or (m_target["util_pct"] >= 15)
+            if not is_active:
+                state = "PAUSED"
+            elif m_target["util_pct"] >= 15:
+                state = "CHOPPING"
+            else:
+                state = "PREPPING_OR_FINDING_JOB"
 
         current_rate = grpc_state["est_hourly_usd"] if grpc_state else None
         is_profitable = None
@@ -396,7 +421,10 @@ class SaladPlugin:
 # =========================================================
 # 3. シングルトンインスタンス & FastAPI Router
 # =========================================================
-salad = SaladPlugin()
+# salad = SaladPlugin()
+# salad_router = APIRouter(prefix="/salad", tags=["Salad"])
+
+salad = SaladPlugin(PRESETS["terra"])
 salad_router = APIRouter(prefix="/salad", tags=["Salad"])
 
 

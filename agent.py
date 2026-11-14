@@ -80,8 +80,8 @@ def _sync_salad_state(gpu_name: str):
 
     st = salad.get_status().get("state", "STOPPED")
     
-    # 明確に停止しているステータス以外はすべて「稼働中」とみなす
-    INACTIVE_STATES = {"PAUSED", "STOPPED", "UNKNOWN", "ERROR", "OFFLINE"}
+    # 明確に PAUSED または STOPPED の時だけ停止とみなし、UNKNOWN 等の一時状態では消さない
+    INACTIVE_STATES = {"PAUSED", "STOPPED"}
     is_active = st not in INACTIVE_STATES
 
     current = running_processes.get(gpu_name)
