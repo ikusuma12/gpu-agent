@@ -151,6 +151,7 @@ def get_status(gpu_name: str):
         # 1. Salad の場合は proc が None でも running として返す
         if current["service"] == "salad":
             return {
+                "running": True,
                 "status": "running",
                 "service": "salad",
                 "running_service": "salad",
@@ -162,6 +163,7 @@ def get_status(gpu_name: str):
         if current["proc"] is not None and current["proc"].poll() is None:
             svc = current["service"]
             return {
+                "running": True,
                 "status": "running",
                 "service": svc,
                 "running_service": svc,
@@ -172,6 +174,7 @@ def get_status(gpu_name: str):
             running_processes.pop(gpu_name, None)
 
     return {
+        "running": False,
         "status": "stopped",
         "service": None,
         "running_service": None,
