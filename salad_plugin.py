@@ -348,12 +348,14 @@ class SaladPlugin:
             state = "STOPPED"
             is_active = False
             self._last_known_active = False
+            
         elif grpc_state is not None:
             is_active = grpc_state["is_active"]
             self._last_known_active = is_active
+            has_earning_rate = (grpc_state.get("est_hourly_usd") or 0.0) > 0.0
             if not is_active:
                 state = "PAUSED"
-            elif m_target["util_pct"] >= 15:
+            elif has_earning_rate or m_target["util_pct"] >= 15:
                 state = "CHOPPING"
             else:
                 state = "PREPPING_OR_FINDING_JOB"
@@ -424,7 +426,7 @@ class SaladPlugin:
 # salad = SaladPlugin()
 # salad_router = APIRouter(prefix="/salad", tags=["Salad"])
 
-salad = SaladPlugin(PRESETS["terra"])
+salad = SaladPlugin(PRESETS["torrent"])
 salad_router = APIRouter(prefix="/salad", tags=["Salad"])
 
 
